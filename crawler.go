@@ -35,7 +35,6 @@ type CrawlerConfig struct {
 
 type Crawler struct {
 	queue []*http.Request
-	qch chan *http.Request
 	client *http.Client
 	user_agent string
 	ResponseChannel chan *Response
@@ -48,7 +47,6 @@ func NewCrawler(config *CrawlerConfig) *Crawler {
 	runtime.GOMAXPROCS(BUFFER_SIZE)
 	c := &Crawler {
 		queue: make([]*http.Request, 0),
-		qch: make(chan *http.Request),
 		client: &http.Client{ Transport: &http.Transport{} },
 		user_agent: fmt.Sprintf("%s %s", config.Email, config.URL),
 		ResponseChannel: make(chan *Response),
@@ -79,7 +77,7 @@ func (c *Crawler) Push(r *http.Request) {
 		if !c.ltime[r.URL.Host].IsZero() {
 			ltime := c.ltime[r.URL.Host]
 			if ltime.Sub(time.Now()) <= (time.Microsecond * 200) {
-				return
+				time.Sleep(ltime.Sub(time.Now()))
 			}
 		}
 		c.ltime[r.URL.Host] = time.Now()
