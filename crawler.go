@@ -35,7 +35,6 @@ type CrawlerConfig struct {
 
 type Crawler struct {
 	queue []*http.Request
-	client *http.Client
 	user_agent string
 	ResponseChannel chan *Response
 	ltime map[string]time.Time
@@ -47,7 +46,6 @@ func NewCrawler(config *CrawlerConfig) *Crawler {
 	runtime.GOMAXPROCS(BUFFER_SIZE)
 	c := &Crawler {
 		queue: make([]*http.Request, 0),
-		client: &http.Client{ Transport: &http.Transport{} },
 		user_agent: fmt.Sprintf("%s %s", config.Email, config.URL),
 		ResponseChannel: make(chan *Response),
 		ltime: make(map[string]time.Time, 0),
@@ -66,6 +64,16 @@ type Response struct {
 }
 
 func (c *Crawler) Push(r *http.Request) {
+	// Last access time.
+	if !c.ltime[r.URL.Host].IsZero() {
+		ltime := c.ltime[r.URL.Host]
+		delta := time.Now().Sub(ltime)
+		if delta < time.Millisecond * 200 {
+		    time.Sleep(time.Millisecond * 200 - delta)
+		}
+	}
+	c.ltime[r.URL.Host] = time.Now()
+
 	go func(r *http.Request) {
 		c.lock.Lock()
 		c.queue = append(c.queue, r)
@@ -73,17 +81,8 @@ func (c *Crawler) Push(r *http.Request) {
 
 		r.Header.Add("User-Agent", c.user_agent)
 
-		// Last access time.
-		if !c.ltime[r.URL.Host].IsZero() {
-			ltime := c.ltime[r.URL.Host]
-			if ltime.Sub(time.Now()) <= (time.Microsecond * 200) {
-				time.Sleep(ltime.Sub(time.Now()))
-			}
-		}
-		c.ltime[r.URL.Host] = time.Now()
-
 		log.Printf("%s begin requesting %s.", alu.Caller(), r.URL.String())
-		resp, err := c.client.Do(r)
+		resp, err := http.DefaultClient.Do(r)
 		if err != nil {
 			log.Printf("%s has error, %s.", alu.Caller(), err.Error())
 		}
