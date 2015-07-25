@@ -2,10 +2,6 @@
 * A web crawler.
 
 
-# Features
- - [x] Concurrent requesting.
-
-
 # Usage
 ```
 import (
@@ -14,7 +10,7 @@ import (
 )
 
 func main() {
-	c := crawler.NewCrawler(&crawler.CrawlerConfig {                               
+	c := crawler.NewCrawler(&crawler.Config {                               
         Email: "example@example.com",                         
         URL: "https://www.example.com",                                     
     })
@@ -27,8 +23,8 @@ func main() {
     
     for {                                                                          
         select {                                                                   
-        case r := <-c.ResponseChannel:                                             
-            fmt.Printf("%s (%d).\n", r.URL, r.Response.StatusCode)                 
+        case r := <-c.Response:
+            fmt.Printf("%s (%d).\n", r.URL, r.StatusCode)                 
         }                                                                          
     }
 }
