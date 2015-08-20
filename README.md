@@ -24,7 +24,7 @@ func main() {
     for {                                                                          
         select {                                                                   
         case r := <-c.Response:
-            fmt.Printf("%s (%d).\n", r.URL, r.StatusCode)                 
+            fmt.Printf("%s (%d).\n", r.Request.URL.String(), r.StatusCode)                 
         }                                                                          
     }
 }

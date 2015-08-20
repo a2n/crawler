@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"fmt"
 	"log"
-	"net/url"
 	"runtime"
 	"time"
 	"io/ioutil"
@@ -26,85 +25,130 @@ type Config struct {
 }
 
 type Crawler struct {
-	queue []*http.Request
+	logger *log.Logger
+
+	config *Config
 	user_agent string
 	Response chan *Response
-	config *Config
+	queue []*http.Request
+
+	// Clients
+	clients []*client
+	currentClient *client
 }
 
-const BUFFER_SIZE = 16
 func NewCrawler(config *Config) *Crawler {
-	runtime.GOMAXPROCS(BUFFER_SIZE)
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	c := &Crawler {
-		queue: make([]*http.Request, 0),
 		user_agent: fmt.Sprintf("%s %s", config.Email, config.URL),
 		Response: make(chan *Response, config.Concurrency),
+		queue: make([]*http.Request, 0),
 		config: config,
+		logger: alu.NewLogger("crawler.log"),
 	}
 
-	go c.tick()
+	/*
+	 * TODO
+	 * The transport of client supports MaxIdleConnsPerHost property.
+	 * It controls the concurrent connections,use few transports instead of 
+	 * clients.
+	 *
+	 */
+	// Init clients
+	c.clients = make([]*client, 0)
+	for i := 0; i < config.Concurrency; i++ {
+		client := NewClient(c.logger, uint8(i), c.Response)
+		c.clients = append(c.clients, client)
+	}
+
+	currentClient := c.clients[0]
+	for i := 0; i < len(c.clients); i++ {
+		if i != len(c.clients) - 1{
+			c.clients[i].Next = c.clients[i + 1]
+		} else {
+			c.clients[i].Next = c.clients[0]
+		}
+	}
+	c.currentClient = currentClient
+
 	return c
 }
 
-type Response struct {
-	URL *url.URL
-	Header http.Header
-	Body []byte
-	StatusCode int
-}
-
 func (c *Crawler) Push(r *http.Request) {
-	ch := make(chan bool)
-	go func(r *http.Request) {
-		r.Header.Add("User-Agent", c.user_agent)
-		c.queue = append(c.queue, r)
-		ch <- true
-	}(r)
-	<-ch
+	r.Header.Add("User-Agent", c.user_agent)
+	c.currentClient.Push(r)
+	c.currentClient = c.currentClient.Next
 }
 
-func (c *Crawler) tick() {
-	for {
-		select {
-		case <-time.Tick(time.Millisecond * 250):
-			for i := 0; i < c.config.Concurrency; i++ {
+type  client struct {
+	logger *log.Logger
+	index uint8
+	client *http.Client
+	queue []*http.Request
+	Response chan *Response
+	Next *client
+}
+
+func NewClient(l *log.Logger, idx uint8, ch chan *Response) *client {
+	c := &client {
+		logger: l,
+		index: idx,
+		client: &http.Client{},
+		queue: make([]*http.Request, 0),
+		Response: ch,
+	}
+
+	go func() {
+		for {
+			select {
+			case <- time.Tick(250 * time.Microsecond):
 				if len(c.queue) > 0 {
-					r := c.queue[0]
-					c.queue = append(c.queue[:0], c.queue[1:]...)
-					go c.fire(r)
+					c.fire()
 				}
 			}
 		}
-	}
+	}()
+
+	return c
 }
 
-func (c *Crawler) fire(r *http.Request) {
-	log.Printf("%s begin requesting %s.", alu.Caller(), r.URL.String())
-	resp, err := http.DefaultClient.Do(r)
+func (c *client) Push(r *http.Request) {
+	c.queue = append(c.queue, r)
+}
+
+type Response struct {
+	Header http.Header
+	Body []byte
+	Request *http.Request
+	StatusCode int
+}
+
+func (c *client) fire() {
+	req := c.queue[0]
+
+	c.logger.Printf("client %d, begin to request %s.", c.index, req.URL.String())
+	resp, err := c.client.Do(req)
+	c.queue = append(c.queue[:0], c.queue[1:]...)
 	if err != nil {
-		log.Printf("%s has error, %s.", alu.Caller(), err.Error())
+		c.logger.Printf("client %d has error, %s.", c.index, err.Error())
 		return
 	}
-	log.Printf("%s end requesting %s.", alu.Caller(), r.URL.String())
+	c.logger.Printf("client %d, finished requesting %s.", c.index, req.URL.String())
 
 	b, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("%s has error, %s.", alu.Caller(), err.Error())
-		return
-	}
-
-	err = resp.Body.Close()
-	if err != nil {
-		log.Printf("%s has error, %s.", alu.Caller(), err.Error())
+		resp.Body.Close()
+		c.logger.Printf("client %d has error, %s.", c.index, err.Error())
 		return
 	}
 
 	my_resp := &Response {
-		URL: r.URL,
 		Header: resp.Header,
 		Body: b,
+		Request: resp.Request,
 		StatusCode: resp.StatusCode,
 	}
 
-	c.Response <-my_resp
+	c.Response <- my_resp
 }
