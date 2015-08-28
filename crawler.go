@@ -137,8 +137,8 @@ func (c *client) fire() {
 	c.logger.Printf("client %d, finished requesting %s.", c.index, req.URL.String())
 
 	b, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
 	if err != nil {
-		resp.Body.Close()
 		c.logger.Printf("client %d has error, %s.", c.index, err.Error())
 		return
 	}
